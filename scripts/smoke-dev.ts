@@ -1,9 +1,13 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DEV_SMOKE_READY_MARKER } from "../apps/desktop/src/dev-smoke";
 
 const timeoutMs = 30_000;
 let timedOut = false;
+const smokeDataDirectory = await mkdtemp(join(tmpdir(), "opengbot-smoke-"));
 
 const child = Bun.spawn(["bun", "run", "--filter", "@opengbot/desktop", "dev"], {
   cwd: fileURLToPath(new URL("..", import.meta.url)),
@@ -11,6 +15,8 @@ const child = Bun.spawn(["bun", "run", "--filter", "@opengbot/desktop", "dev"], 
   env: {
     ...process.env,
     OPENGBOT_DEV_SMOKE: "1",
+    OPENGBOT_SMOKE_DATA_DIR: smokeDataDirectory,
+    OPENGBOT_SMOKE_PROJECT_ROOT: fileURLToPath(new URL("..", import.meta.url)),
   },
   stdin: "inherit",
   stdout: "pipe",
@@ -64,6 +70,7 @@ const timeout = setTimeout(() => {
 const exitCode = await child.exited;
 clearTimeout(timeout);
 const output = (await Promise.all([stdout, stderr])).join("\n");
+await rm(smokeDataDirectory, { recursive: true, force: true });
 
 if (timedOut) process.exit(1);
 if (exitCode !== 0) process.exit(exitCode);

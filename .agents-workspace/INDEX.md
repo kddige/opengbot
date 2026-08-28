@@ -22,6 +22,7 @@ Phase 0: foundation and first vertical slice.
 - [ADR 001: Adopt TanStack AI natively](decisions/001-adopt-tanstack-ai-natively.md)
 - [ADR 002: Embedded utility process and remote daemon](decisions/002-embedded-utility-and-remote-daemon.md)
 - [ADR 003: Provider-owned CLI authentication](decisions/003-provider-owned-cli-auth.md)
+- [ADR 004: Project-scoped Codex desktop slice](decisions/004-project-scoped-codex-slice.md)
 
 Research and reviews are inputs only. Use accepted ADRs and the current product
 brief for normative architecture guidance.

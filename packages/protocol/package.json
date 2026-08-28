@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ag-ui/core": "0.1.1-canary.beta.0",
+    "@tanstack/ai": "^0.52.0",
     "zod": "^4.1.5"
   }
 }

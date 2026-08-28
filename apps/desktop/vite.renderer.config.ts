@@ -8,5 +8,6 @@ export default defineConfig({
     alias: {
       "@": new URL("./src/renderer", import.meta.url).pathname,
     },
+    dedupe: ["react", "react-dom"],
   },
 });

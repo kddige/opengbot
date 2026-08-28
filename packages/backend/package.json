@@ -16,6 +16,7 @@
     "@tanstack/ai-codex": "^0.5.3",
     "@tanstack/ai-grok-build": "^0.5.3",
     "@tanstack/ai-persistence": "^0.5.4",
-    "@tanstack/ai-sandbox": "^0.5.4"
+    "@tanstack/ai-sandbox": "^0.5.4",
+    "@tanstack/ai-sandbox-local-process": "^0.2.4"
   }
 }

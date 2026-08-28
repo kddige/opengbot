@@ -9,8 +9,15 @@ The desktop app will work in two modes:
 - **Local:** the client and backend ship together as one desktop application.
 - **Remote:** the same client connects securely to a backend on another machine.
 
-The project is greenfield and currently in its foundation phase. Architecture,
-research, and quality decisions live in [`.agents-workspace`](.agents-workspace/README.md).
+The first vertical slice is working: choose a project with the native desktop
+picker, use the host's existing Codex ChatGPT login, and stream a project-scoped
+conversation through TanStack AI. Architecture, research, and quality decisions
+live in [`.agents-workspace`](.agents-workspace/README.md).
+
+The embedded backend runs Codex as a trusted host process with the selected
+project as its working and write root and network access disabled. This is an
+explicit capability boundary, not strong read containment; stronger isolation
+and the remote backend transport are upcoming work.
 
 ## Toolchain
 
@@ -27,8 +34,16 @@ manager and script runner.
 
 ```sh
 bun install
-bun run verify
+bun run dev
 ```
 
-`verify` includes a real Electron development-start smoke check. It only passes
-after the renderer completes a handshake with the embedded backend.
+Run the complete quality gate before committing:
+
+```sh
+bun run verify
+bun run build
+```
+
+`verify` includes formatting, linting, type checks, tests, and a real Electron
+smoke flow covering the embedded backend handshake, native project grant, and a
+streamed chat completion.
