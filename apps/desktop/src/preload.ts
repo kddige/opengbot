@@ -27,6 +27,15 @@ type PendingChat = {
   reject: (error: Error) => void;
 };
 
+export type DesktopCommand = "open-project" | "toggle-sidebar" | "focus-composer" | "stop-run";
+
+const desktopCommands = new Set<DesktopCommand>([
+  "open-project",
+  "toggle-sidebar",
+  "focus-composer",
+  "stop-run",
+]);
+
 const backendTimeoutMs = 10_000;
 let backendPort: MessagePort | undefined;
 let devSmoke = false;
@@ -155,6 +164,16 @@ async function requestControl(request: ControlRequest): Promise<BackendSnapshot>
 const api = Object.freeze({
   isDevSmoke(): boolean {
     return devSmoke;
+  },
+
+  onCommand(listener: (command: DesktopCommand) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, command: unknown) => {
+      if (typeof command === "string" && desktopCommands.has(command as DesktopCommand)) {
+        listener(command as DesktopCommand);
+      }
+    };
+    ipcRenderer.on("opengbot.command", handler);
+    return () => ipcRenderer.removeListener("opengbot.command", handler);
   },
 
   handshake(): Promise<BackendSnapshot> {

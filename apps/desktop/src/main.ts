@@ -10,9 +10,13 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   MessageChannelMain,
+  nativeTheme,
   session,
+  shell,
   utilityProcess,
+  type MenuItemConstructorOptions,
   type MessagePortMain,
   type UtilityProcess,
 } from "electron";
@@ -32,6 +36,78 @@ const privilegedRequests = new Map<
 const privilegedRequestTimeoutMs = 10_000;
 const utilityShutdownFallbackMs = 8_000;
 const isDevSmoke = process.env.OPENGBOT_DEV_SMOKE === "1";
+
+type DesktopCommand = "open-project" | "toggle-sidebar" | "focus-composer" | "stop-run";
+
+function sendDesktopCommand(command: DesktopCommand): void {
+  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  window?.webContents.send("opengbot.command", command);
+}
+
+function installApplicationMenu(): void {
+  const template: MenuItemConstructorOptions[] = [
+    ...(process.platform === "darwin"
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" as const },
+              { type: "separator" as const },
+              { role: "services" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+              { role: "quit" as const },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "Open Project…",
+          accelerator: "CmdOrCtrl+O",
+          click: () => sendDesktopCommand("open-project"),
+        },
+        { type: "separator" },
+        { role: process.platform === "darwin" ? "close" : "quit" },
+      ],
+    },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Toggle Sidebar",
+          accelerator: "CmdOrCtrl+B",
+          click: () => sendDesktopCommand("toggle-sidebar"),
+        },
+        {
+          label: "Focus Composer",
+          accelerator: "CmdOrCtrl+L",
+          click: () => sendDesktopCommand("focus-composer"),
+        },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Run",
+      submenu: [
+        {
+          label: "Stop Run",
+          accelerator: "CmdOrCtrl+.",
+          click: () => sendDesktopCommand("stop-run"),
+        },
+      ],
+    },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 if (isDevSmoke && process.env.OPENGBOT_SMOKE_DATA_DIR) {
   app.setPath("userData", process.env.OPENGBOT_SMOKE_DATA_DIR);
 }
@@ -131,14 +207,25 @@ function sendPrivilegedRequest(request: ControlRequest): Promise<BackendSnapshot
 }
 
 async function createWindow(): Promise<void> {
+  const dark = nativeTheme.shouldUseDarkColors;
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 960,
     minHeight: 640,
-    backgroundColor: "#0a0a0a",
+    backgroundColor: dark ? "#242528" : "#fbfbfc",
     show: false,
     title: "OpenGBot",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    ...(process.platform === "darwin"
+      ? {}
+      : {
+          titleBarOverlay: {
+            color: dark ? "#242528" : "#fbfbfc",
+            symbolColor: dark ? "#f4f4f5" : "#18181b",
+            height: 52,
+          },
+        }),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -147,7 +234,17 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+        void shell.openExternal(parsed.toString());
+      }
+    } catch {
+      // Invalid URLs remain blocked.
+    }
+    return { action: "deny" };
+  });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   window.webContents.on("console-message", (details) => {
     if (isDevSmoke && details.message === DEV_SMOKE_READY_MARKER) {
@@ -175,6 +272,7 @@ async function createWindow(): Promise<void> {
 app.enableSandbox();
 
 void app.whenReady().then(async () => {
+  installApplicationMenu();
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
