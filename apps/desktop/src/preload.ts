@@ -11,33 +11,44 @@ type PendingRequest = {
   reject: (error: Error) => void;
 };
 
+const backendTimeoutMs = 10_000;
 let backendPort: MessagePort | undefined;
 const pending = new Map<string, PendingRequest>();
 
-ipcRenderer.once("opengbot.connect", (event) => {
-  const [port] = event.ports;
+const backendPortReady = new Promise<MessagePort>((resolve, reject) => {
+  const timeout = setTimeout(() => {
+    reject(new Error(`Embedded backend connection timed out after ${backendTimeoutMs}ms`));
+  }, backendTimeoutMs);
 
-  if (!port) return;
+  ipcRenderer.once("opengbot.connect", (event) => {
+    const [port] = event.ports;
 
-  backendPort = port;
-  port.addEventListener("message", (messageEvent) => {
-    const response = controlResponseSchema.parse(messageEvent.data);
-    const request = pending.get(response.requestId);
+    if (!port) {
+      clearTimeout(timeout);
+      reject(new Error("Embedded backend connection did not include a message port"));
+      return;
+    }
 
-    if (!request) return;
-    pending.delete(response.requestId);
+    backendPort = port;
+    port.addEventListener("message", (messageEvent) => {
+      const response = controlResponseSchema.parse(messageEvent.data);
+      const request = pending.get(response.requestId);
 
-    if (response.ok) request.resolve(response.payload);
-    else request.reject(new Error(response.error.message));
+      if (!request) return;
+      pending.delete(response.requestId);
+
+      if (response.ok) request.resolve(response.payload);
+      else request.reject(new Error(response.error.message));
+    });
+    port.start();
+    clearTimeout(timeout);
+    resolve(port);
   });
-  port.start();
 });
 
 const api = Object.freeze({
-  handshake(): Promise<BackendSnapshot> {
-    if (!backendPort) {
-      return Promise.reject(new Error("Embedded backend connection is not ready"));
-    }
+  async handshake(): Promise<BackendSnapshot> {
+    const port = backendPort ?? (await backendPortReady);
 
     const requestId = crypto.randomUUID();
     const request: ControlRequest = {
@@ -51,10 +62,24 @@ const api = Object.freeze({
     };
 
     return new Promise((resolve, reject) => {
-      pending.set(requestId, { resolve, reject });
+      const timeout = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error(`Embedded backend handshake timed out after ${backendTimeoutMs}ms`));
+      }, backendTimeoutMs);
+
+      pending.set(requestId, {
+        resolve: (snapshot) => {
+          clearTimeout(timeout);
+          resolve(snapshot);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
       // MessagePort.postMessage has no targetOrigin parameter.
       // oxlint-disable-next-line unicorn/require-post-message-target-origin
-      backendPort?.postMessage(request);
+      port.postMessage(request);
     });
   },
 });

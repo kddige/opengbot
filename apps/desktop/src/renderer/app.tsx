@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 
+import { DEV_SMOKE_READY_MARKER } from "../dev-smoke";
+
 export function App() {
   const [snapshot, setSnapshot] = useState<BackendSnapshot>();
   const [error, setError] = useState<string>();
@@ -24,7 +26,10 @@ export function App() {
     window.opengbot
       .handshake()
       .then((nextSnapshot) => {
-        if (!cancelled) setSnapshot(nextSnapshot);
+        if (!cancelled) {
+          setSnapshot(nextSnapshot);
+          console.info(DEV_SMOKE_READY_MARKER);
+        }
       })
       .catch((cause: unknown) => {
         if (!cancelled) {

@@ -13,9 +13,10 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",
+    "qa:dev": "bun run scripts/smoke-dev.ts",
     "test": "bun test",
     "typecheck": "bun run --filter '*' typecheck",
-    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test"
+    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run qa:dev"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

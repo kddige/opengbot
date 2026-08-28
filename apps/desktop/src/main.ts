@@ -9,13 +9,16 @@ import {
   type UtilityProcess,
 } from "electron";
 
+import { DEV_SMOKE_READY_MARKER } from "./dev-smoke";
+
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
 let utility: UtilityProcess | undefined;
+const isDevSmoke = process.env.OPENGBOT_DEV_SMOKE === "1";
 
 function createBackendUtility(): UtilityProcess {
-  const child = utilityProcess.fork(join(__dirname, "utility.js"), [], {
+  const child = utilityProcess.fork(join(__dirname, "utility.cjs"), [], {
     serviceName: "OpenGBot Backend",
     stdio: "pipe",
   });
@@ -50,13 +53,19 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      preload: join(__dirname, "preload.js"),
+      preload: join(__dirname, "preload.cjs"),
     },
   });
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
-  window.once("ready-to-show", () => window.show());
+  window.webContents.on("console-message", (details) => {
+    if (isDevSmoke && details.message === DEV_SMOKE_READY_MARKER) {
+      console.info(`OpenGBot development smoke check passed [${DEV_SMOKE_READY_MARKER}]`);
+      app.quit();
+    }
+  });
+  if (!isDevSmoke) window.once("ready-to-show", () => window.show());
   window.webContents.once("did-finish-load", () => {
     utility ??= createBackendUtility();
     attachBackend(window, utility);

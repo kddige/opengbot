@@ -29,3 +29,6 @@ manager and script runner.
 bun install
 bun run verify
 ```
+
+`verify` includes a real Electron development-start smoke check. It only passes
+after the renderer completes a handshake with the embedded backend.
