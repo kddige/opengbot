@@ -1,0 +1,17 @@
+{
+  "name": "@opengbot/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./src/main.ts --outdir ./dist --target bun",
+    "dev": "bun --watch ./src/main.ts",
+    "start": "bun ./src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opengbot/backend": "workspace:*",
+    "@opengbot/protocol": "workspace:*",
+    "hono": "^4.9.5"
+  }
+}

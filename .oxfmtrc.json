@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [".agents/**", "node_modules/**", "dist/**", "out/**"],
+  "proseWrap": "preserve",
+  "singleQuote": false,
+  "sortImports": true,
+  "sortPackageJson": true
+}

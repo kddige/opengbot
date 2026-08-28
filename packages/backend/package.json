@@ -1,0 +1,21 @@
+{
+  "name": "@opengbot/backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opengbot/protocol": "workspace:*",
+    "@tanstack/ai": "^0.52.0",
+    "@tanstack/ai-codex": "^0.5.3",
+    "@tanstack/ai-grok-build": "^0.5.3",
+    "@tanstack/ai-persistence": "^0.5.4",
+    "@tanstack/ai-sandbox": "^0.5.4"
+  }
+}
