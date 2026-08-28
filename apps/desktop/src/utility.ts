@@ -1,10 +1,13 @@
-import { join } from "node:path";
-
 import {
   BackendService,
+  acquireOpenGBotHome,
   FakeCodexRunner,
+  FakeGrokRunner,
   FileProjectStore,
+  resolveOpenGBotHome,
   TanStackCodexRunner,
+  TanStackGrokRunner,
+  type OpenGBotHomeLease,
 } from "@opengbot/backend";
 import {
   chatCommandSchema,
@@ -13,23 +16,34 @@ import {
   type ControlResponse,
 } from "@opengbot/protocol";
 
-const dataDirectory = process.env.OPENGBOT_DATA_DIR;
-if (!dataDirectory) throw new Error("OPENGBOT_DATA_DIR is required for the embedded backend.");
+const appHome = resolveOpenGBotHome();
+let appHomeLease: OpenGBotHomeLease | undefined;
+const appHomeReady = acquireOpenGBotHome(appHome).then((lease) => {
+  appHomeLease = lease;
+});
+const fakeDriver = process.env.OPENGBOT_CHAT_DRIVER === "fake";
 
 const embeddedBackend = new BackendService({
   backendId: "embedded:local",
   backendVersion: "0.0.0",
   mode: "embedded",
-  projectStore: new FileProjectStore(join(dataDirectory, "backend-state.json")),
-  codexRunner:
-    process.env.OPENGBOT_CHAT_DRIVER === "fake"
-      ? new FakeCodexRunner()
-      : new TanStackCodexRunner({
+  projectStore: new FileProjectStore(appHome.registryFile),
+  runners: fakeDriver
+    ? [new FakeCodexRunner(), new FakeGrokRunner()]
+    : [
+        new TanStackCodexRunner({
           ...(process.env.OPENGBOT_CODEX_EXECUTABLE
             ? { executable: process.env.OPENGBOT_CODEX_EXECUTABLE }
             : {}),
           ...(process.env.OPENGBOT_CODEX_MODEL ? { model: process.env.OPENGBOT_CODEX_MODEL } : {}),
         }),
+        new TanStackGrokRunner({
+          ...(process.env.OPENGBOT_GROK_EXECUTABLE
+            ? { executable: process.env.OPENGBOT_GROK_EXECUTABLE }
+            : {}),
+          ...(process.env.OPENGBOT_GROK_MODEL ? { model: process.env.OPENGBOT_GROK_MODEL } : {}),
+        }),
+      ],
 });
 
 type ChatStartCommand = Extract<
@@ -73,6 +87,9 @@ async function shutDown(): Promise<void> {
       new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs)),
     ]);
   }
+  await embeddedBackend.close();
+  await appHomeReady.catch(() => undefined);
+  await appHomeLease?.close();
   process.exit(0);
 }
 
@@ -158,14 +175,20 @@ async function handleControl(
   respond: (response: ControlResponse) => void,
 ): Promise<void> {
   try {
-    const payload =
-      request.operation === "backend.handshake"
-        ? await embeddedBackend.handshake(request.payload)
-        : role === "privileged"
-          ? await embeddedBackend.openProject(request.payload)
-          : (() => {
-              throw new Error("Project roots can only be granted by the desktop host.");
-            })();
+    await appHomeReady;
+    let payload;
+    if (request.operation === "backend.handshake") {
+      payload = await embeddedBackend.handshake(request.payload);
+    } else if (request.operation === "project.open") {
+      if (role !== "privileged") {
+        throw new Error("Project roots can only be granted by the desktop host.");
+      }
+      payload = await embeddedBackend.openProject(request.payload);
+    } else if (request.operation === "integration.select") {
+      payload = await embeddedBackend.selectIntegration(request.payload);
+    } else {
+      payload = await embeddedBackend.loginIntegration(request.payload);
+    }
     respond({ channel: "control", requestId: request.requestId, ok: true, payload });
   } catch (error) {
     respond({

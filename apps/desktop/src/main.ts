@@ -123,7 +123,11 @@ function createBackendUtility(): UtilityProcess {
     stdio: "pipe",
     env: {
       ...process.env,
-      OPENGBOT_DATA_DIR: app.getPath("userData"),
+      OPENGBOT_HOME:
+        process.env.OPENGBOT_HOME ??
+        (isDevSmoke
+          ? join(app.getPath("userData"), ".opengbot")
+          : join(app.getPath("home"), ".opengbot")),
       ...(isDevSmoke ? { OPENGBOT_CHAT_DRIVER: "fake" } : {}),
     },
   });
@@ -213,7 +217,7 @@ async function createWindow(): Promise<void> {
     height: 800,
     minWidth: 960,
     minHeight: 640,
-    backgroundColor: dark ? "#242528" : "#fbfbfc",
+    backgroundColor: dark ? "#090a0c" : "#fbfbfc",
     show: false,
     title: "OpenGBot",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
@@ -221,7 +225,7 @@ async function createWindow(): Promise<void> {
       ? {}
       : {
           titleBarOverlay: {
-            color: dark ? "#242528" : "#fbfbfc",
+            color: dark ? "#090a0c" : "#fbfbfc",
             symbolColor: dark ? "#f4f4f5" : "#18181b",
             height: 52,
           },

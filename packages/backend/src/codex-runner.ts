@@ -1,39 +1,23 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatStartPayload, IntegrationAvailability, ProjectSummary } from "@opengbot/protocol";
 import { EventType, chat, type StreamChunk } from "@tanstack/ai";
 import { codexText } from "@tanstack/ai-codex";
 import { defineSandbox, withSandbox } from "@tanstack/ai-sandbox";
 import { localProcessSandbox } from "@tanstack/ai-sandbox-local-process";
 
+import {
+  inheritedEnvironmentScrubList,
+  ProviderLoginProcess,
+  providerProcessEnvironment,
+  type HarnessAvailability,
+  type HarnessRunInput,
+  type HarnessRunner,
+  type LoginMode,
+} from "./harness-runner";
+
 const execFileAsync = promisify(execFile);
-const HOST_LOGIN_ENVIRONMENT_ALLOWLIST = new Set([
-  "CODEX_HOME",
-  "HOME",
-  "LANG",
-  "LC_ALL",
-  "PATH",
-  "SHELL",
-  "TMPDIR",
-  "USER",
-  "XDG_CACHE_HOME",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-]);
-
-function inheritedEnvironmentScrubList(): string[] {
-  return Object.keys(process.env).filter((name) => !HOST_LOGIN_ENVIRONMENT_ALLOWLIST.has(name));
-}
-
-function hostLoginEnvironment(): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    [...HOST_LOGIN_ENVIRONMENT_ALLOWLIST].flatMap((name) => {
-      const value = process.env[name];
-      return value === undefined ? [] : [[name, value]];
-    }),
-  );
-}
+const DEFAULT_CODEX_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
 
 function reportsHostLogin(status: string): boolean {
   const normalized = status.toLowerCase();
@@ -44,55 +28,80 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-export interface CodexAvailability {
-  availability: IntegrationAvailability;
-  statusMessage: string;
-}
-
-export interface CodexRunInput {
-  request: ChatStartPayload;
-  project: ProjectSummary;
-  abortController: AbortController;
-}
-
-export interface CodexRunner {
-  readonly model: string;
-  availability(): Promise<CodexAvailability>;
-  stream(input: CodexRunInput): AsyncIterable<StreamChunk>;
-}
+export type CodexRunner = HarnessRunner;
 
 export interface TanStackCodexRunnerOptions {
   model?: string;
+  models?: string[];
   executable?: string;
 }
 
 export class TanStackCodexRunner implements CodexRunner {
-  readonly model: string;
+  readonly integrationId = "codex-host";
+  readonly provider = "openai";
+  readonly providerId = "codex";
+  readonly displayName = "Codex";
+  readonly credentialMode = "host_cli_login";
+  readonly credentialOwner = "provider_cli";
+  readonly loginModes = ["browser", "device"] as const;
+  readonly defaultModel: string;
   readonly #executable: string;
+  readonly #models: string[];
   readonly #sessions = new Map<string, string>();
+  readonly #login = new ProviderLoginProcess();
 
   constructor(options: TanStackCodexRunnerOptions = {}) {
-    this.model = options.model ?? "gpt-5.6-sol";
+    this.defaultModel = options.model ?? "gpt-5.6-sol";
+    this.#models = [...new Set(options.models ?? [this.defaultModel, ...DEFAULT_CODEX_MODELS])];
     this.#executable = options.executable ?? "codex";
   }
 
-  async availability(): Promise<CodexAvailability> {
+  async availability(): Promise<HarnessAvailability> {
+    const lastCheckedAt = new Date().toISOString();
+    if (this.#login.active) {
+      return {
+        availability: "authenticating",
+        statusMessage: "Waiting for Codex sign-in to finish in your browser.",
+        models: this.#models,
+        executableVersion: await this.#version(),
+        lastCheckedAt,
+      };
+    }
+
     try {
-      const { stdout, stderr } = await execFileAsync(this.#executable, ["login", "status"], {
-        timeout: 5_000,
-        env: hostLoginEnvironment(),
-      });
+      const [{ stdout, stderr }, executableVersion] = await Promise.all([
+        execFileAsync(this.#executable, ["login", "status"], {
+          timeout: 5_000,
+          env: providerProcessEnvironment(),
+        }),
+        this.#version(),
+      ]);
       const status = `${stdout}\n${stderr}`.toLowerCase();
       if (!reportsHostLogin(status)) {
-        return { availability: "login_required", statusMessage: "Run `codex login` on this host." };
+        return {
+          availability: "login_required",
+          statusMessage: "Sign in with your ChatGPT account.",
+          models: this.#models,
+          executableVersion,
+          lastCheckedAt,
+        };
       }
-      return { availability: "ready", statusMessage: "Using the Codex CLI host login." };
+      return {
+        availability: "ready",
+        statusMessage: "Connected with the Codex CLI host login.",
+        models: this.#models,
+        executableVersion,
+        lastCheckedAt,
+      };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
         return {
           availability: "missing_cli",
           statusMessage: "Codex CLI was not found on this host.",
+          models: this.#models,
+          executableVersion: null,
+          lastCheckedAt,
         };
       }
       const failure = error as { stdout?: unknown; stderr?: unknown };
@@ -103,16 +112,37 @@ export class TanStackCodexRunner implements CodexRunner {
         status.toLowerCase().includes("not logged in") ||
         status.toLowerCase().includes("logged out")
       ) {
-        return { availability: "login_required", statusMessage: "Run `codex login` on this host." };
+        return {
+          availability: "login_required",
+          statusMessage: "Sign in with your ChatGPT account.",
+          models: this.#models,
+          executableVersion: await this.#version(),
+          lastCheckedAt,
+        };
       }
       return {
         availability: "unavailable",
         statusMessage: "Codex CLI login status could not be verified.",
+        models: this.#models,
+        executableVersion: await this.#version(),
+        lastCheckedAt,
       };
     }
   }
 
-  async *stream({ request, project, abortController }: CodexRunInput): AsyncIterable<StreamChunk> {
+  async login(mode: LoginMode): Promise<void> {
+    await this.#login.start(this.#executable, [
+      "login",
+      ...(mode === "device" ? ["--device-auth"] : []),
+    ]);
+  }
+
+  async *stream({
+    request,
+    project,
+    model,
+    abortController,
+  }: HarnessRunInput): AsyncIterable<StreamChunk> {
     const sandbox = defineSandbox({
       id: `codex:${project.id}`,
       provider: localProcessSandbox({
@@ -126,7 +156,7 @@ export class TanStackCodexRunner implements CodexRunner {
 
     const sessionId = this.#sessions.get(request.threadId);
     const stream = chat({
-      adapter: codexText(this.model, {
+      adapter: codexText(model, {
         authMode: "host",
         codexExecutable: shellQuote(this.#executable),
         cwd: "/workspace",
@@ -152,16 +182,63 @@ export class TanStackCodexRunner implements CodexRunner {
       yield chunk;
     }
   }
-}
 
-export class FakeCodexRunner implements CodexRunner {
-  readonly model = "fake-codex";
-
-  async availability(): Promise<CodexAvailability> {
-    return { availability: "ready", statusMessage: "Deterministic development driver." };
+  async close(): Promise<void> {
+    await this.#login.close();
   }
 
-  async *stream({ request, abortController }: CodexRunInput): AsyncIterable<StreamChunk> {
+  async #version(): Promise<string | null> {
+    try {
+      const { stdout, stderr } = await execFileAsync(this.#executable, ["--version"], {
+        timeout: 3_000,
+        env: providerProcessEnvironment(),
+      });
+      return `${stdout}\n${stderr}`.trim().split("\n")[0] || null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+interface FakeHarnessRunnerOptions {
+  integrationId: string;
+  provider: "openai" | "xai";
+  providerId: "codex" | "grok";
+  displayName: string;
+  model: string;
+}
+
+export class FakeHarnessRunner implements CodexRunner {
+  readonly integrationId: string;
+  readonly provider: "openai" | "xai";
+  readonly providerId: "codex" | "grok";
+  readonly displayName: string;
+  readonly credentialMode = "host_cli_login";
+  readonly credentialOwner = "provider_cli";
+  readonly defaultModel: string;
+  readonly loginModes = ["browser", "device"] as const;
+
+  constructor(options: FakeHarnessRunnerOptions) {
+    this.integrationId = options.integrationId;
+    this.provider = options.provider;
+    this.providerId = options.providerId;
+    this.displayName = options.displayName;
+    this.defaultModel = options.model;
+  }
+
+  async availability(): Promise<HarnessAvailability> {
+    return {
+      availability: "ready",
+      statusMessage: "Deterministic development driver.",
+      models: [this.defaultModel],
+      executableVersion: "fake",
+      lastCheckedAt: new Date().toISOString(),
+    };
+  }
+
+  async login(_mode: LoginMode): Promise<void> {}
+
+  async *stream({ request, abortController }: HarnessRunInput): AsyncIterable<StreamChunk> {
     const messageId = `assistant:${request.runId}`;
     yield {
       type: EventType.RUN_STARTED,
@@ -181,5 +258,31 @@ export class FakeCodexRunner implements CodexRunner {
       threadId: request.threadId,
       runId: request.runId,
     };
+  }
+
+  async close(): Promise<void> {}
+}
+
+export class FakeCodexRunner extends FakeHarnessRunner {
+  constructor() {
+    super({
+      integrationId: "codex-host",
+      provider: "openai",
+      providerId: "codex",
+      displayName: "Codex",
+      model: "fake-codex",
+    });
+  }
+}
+
+export class FakeGrokRunner extends FakeHarnessRunner {
+  constructor() {
+    super({
+      integrationId: "grok-host",
+      provider: "xai",
+      providerId: "grok",
+      displayName: "Grok",
+      model: "fake-grok",
+    });
   }
 }

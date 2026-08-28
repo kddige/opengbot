@@ -147,8 +147,11 @@
   user-select: none;
 }
 
-.app-content,
 .select-text {
+  user-select: text;
+}
+
+.app-chrome :where(input, textarea, [contenteditable="true"]) {
   user-select: text;
 }
 

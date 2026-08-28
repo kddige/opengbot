@@ -25,6 +25,8 @@ Phase 0: foundation and first vertical slice.
 - [ADR 003: Provider-owned CLI authentication](decisions/003-provider-owned-cli-auth.md)
 - [ADR 004: Project-scoped Codex desktop slice](decisions/004-project-scoped-codex-slice.md)
 - [ADR 005: Adopt a normative product design contract](decisions/005-adopt-product-design-contract.md)
+- [ADR 006: Separate control RPC from native AI streaming](decisions/006-control-rpc-and-ai-stream-planes.md)
+- [ADR 007: Backend home and provider-owned account registry](decisions/007-backend-home-and-provider-accounts.md)
 
 Research and reviews are inputs only. Use accepted ADRs and the current product
 brief for normative architecture guidance.

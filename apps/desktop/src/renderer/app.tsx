@@ -4,10 +4,10 @@ import {
   AlertTriangleIcon,
   BotIcon,
   CheckCircle2Icon,
-  ChevronDownIcon,
-  CopyIcon,
+  ChevronRightIcon,
   FolderIcon,
   FolderOpenIcon,
+  LogInIcon,
   MessageSquareIcon,
   PanelLeftIcon,
   RotateCcwIcon,
@@ -32,15 +32,6 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyContent,
@@ -83,14 +74,27 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-import { DEV_SMOKE_READY_MARKER } from "../dev-smoke";
+import { DEV_SMOKE_PROVIDER_MARKER, DEV_SMOKE_READY_MARKER } from "../dev-smoke";
 import { createBackendConnection } from "./backend-connection";
+import { ProviderContextMenu } from "./features/providers/provider-context-menu";
 
 const SIDEBAR_STORAGE_KEY = "opengbot.sidebar.open";
 const IS_MAC = navigator.platform.toLowerCase().includes("mac");
 const SIDEBAR_COLLAPSED_WIDTH = IS_MAC ? 84 : 56;
 
 type DesktopCommand = "open-project" | "toggle-sidebar" | "focus-composer" | "stop-run";
+
+function humanizeIdentifier(value: string): string {
+  const words = value.replaceAll(/[_-]+/g, " ").trim();
+  return words ? `${words.charAt(0).toUpperCase()}${words.slice(1)}` : value;
+}
+
+function accessLabel(mode: string): string {
+  if (mode === "workspace-write") return "Can edit project files";
+  if (mode === "read-only") return "Can read project files";
+  if (mode === "danger-full-access") return "Full project access";
+  return humanizeIdentifier(mode);
+}
 
 function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
   if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
@@ -103,6 +107,8 @@ export function App() {
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [choosingProject, setChoosingProject] = useState(false);
+  const [integrationBusyId, setIntegrationBusyId] = useState<string>();
+  const [integrationError, setIntegrationError] = useState<string>();
   const [sidebarOpen, setSidebarOpen] = useState(
     () => window.localStorage.getItem(SIDEBAR_STORAGE_KEY) !== "false",
   );
@@ -123,6 +129,14 @@ export function App() {
         if (window.opengbot.isDevSmoke() && !nextSnapshot.activeProject) {
           nextSnapshot = (await window.opengbot.chooseProject()) ?? nextSnapshot;
           console.info("opengbot:project-ready");
+          const smokeIntegration = nextSnapshot.integrations.find(
+            (integration) => integration.id === "grok-host",
+          );
+          const smokeModel = smokeIntegration?.models[0];
+          if (smokeIntegration && smokeModel) {
+            nextSnapshot = await window.opengbot.selectIntegration(smokeIntegration.id, smokeModel);
+            console.info(DEV_SMOKE_PROVIDER_MARKER);
+          }
         }
         setSnapshot(nextSnapshot);
       } catch (cause) {
@@ -141,6 +155,32 @@ export function App() {
     void connect();
   }, [connect]);
 
+  useEffect(() => {
+    if (
+      !snapshot?.integrations.some((integration) => integration.availability === "authenticating")
+    )
+      return;
+    let cancelled = false;
+    const poll = window.setInterval(() => {
+      void window.opengbot
+        .handshake()
+        .then((nextSnapshot) => {
+          if (!cancelled) setSnapshot(nextSnapshot);
+        })
+        .catch((cause: unknown) => {
+          if (!cancelled) {
+            setIntegrationError(
+              cause instanceof Error ? cause.message : "Sign-in status could not be refreshed.",
+            );
+          }
+        });
+    }, 1_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [snapshot]);
+
   const chooseProject = useCallback(async () => {
     setChoosingProject(true);
     setError(undefined);
@@ -151,6 +191,32 @@ export function App() {
       setError(cause instanceof Error ? cause.message : "The project could not be opened.");
     } finally {
       setChoosingProject(false);
+    }
+  }, []);
+
+  const selectIntegration = useCallback(async (integrationId: string, model: string) => {
+    setIntegrationBusyId(integrationId);
+    setIntegrationError(undefined);
+    try {
+      setSnapshot(await window.opengbot.selectIntegration(integrationId, model));
+    } catch (cause) {
+      setIntegrationError(
+        cause instanceof Error ? cause.message : "The provider could not be selected.",
+      );
+    } finally {
+      setIntegrationBusyId(undefined);
+    }
+  }, []);
+
+  const loginIntegration = useCallback(async (integrationId: string) => {
+    setIntegrationBusyId(integrationId);
+    setIntegrationError(undefined);
+    try {
+      setSnapshot(await window.opengbot.loginIntegration(integrationId, "browser"));
+    } catch (cause) {
+      setIntegrationError(cause instanceof Error ? cause.message : "Sign-in could not be started.");
+    } finally {
+      setIntegrationBusyId(undefined);
     }
   }, []);
 
@@ -212,7 +278,28 @@ export function App() {
                   choosingProject={choosingProject}
                   onToggleSidebar={() => changeSidebar(!sidebarOpen)}
                   onChooseProject={chooseProject}
+                  integrationBusyId={integrationBusyId}
+                  onSelectIntegration={selectIntegration}
+                  onLoginIntegration={loginIntegration}
                 />
+                {integrationError ? (
+                  <Alert variant="destructive" className="m-3 mb-0 w-auto shrink-0">
+                    <AlertTriangleIcon />
+                    <AlertTitle>Provider action failed</AlertTitle>
+                    <AlertDescription className="select-text">{integrationError}</AlertDescription>
+                    <AlertAction>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Dismiss provider error"
+                        onClick={() => setIntegrationError(undefined)}
+                      >
+                        <XIcon />
+                      </Button>
+                    </AlertAction>
+                  </Alert>
+                ) : null}
                 <section className="app-content min-h-0 flex-1">
                   {loading ? (
                     <WorkspaceSkeleton />
@@ -222,10 +309,12 @@ export function App() {
                     snapshot.activeSession &&
                     snapshot.activeIntegration ? (
                     <ChatWorkspace
-                      key={snapshot.activeSession.id}
+                      key={`${snapshot.activeSession.id}:${snapshot.activeIntegration.id}:${snapshot.activeIntegration.model ?? "none"}`}
                       snapshot={snapshot}
                       composerRef={composerRef}
                       stopRunRef={stopRunRef}
+                      integrationBusy={integrationBusyId === snapshot.activeIntegration.id}
+                      onLoginIntegration={loginIntegration}
                     />
                   ) : (
                     <ProjectEmptyState
@@ -292,7 +381,6 @@ function WorkspaceSidebar({
                   <SidebarMenuButton
                     type="button"
                     size="lg"
-                    isActive
                     {...(collapsed ? { tooltip: snapshot.activeProject.name } : {})}
                     onClick={onChooseProject}
                     className={collapsed ? "justify-center" : undefined}
@@ -372,7 +460,7 @@ function WorkspaceSidebar({
                       {snapshot.mode === "embedded" ? "Local backend" : "Remote backend"}
                     </span>
                     <span className="block truncate text-[11px] text-muted-foreground">
-                      {snapshot.status.replace("_", " ")}
+                      {humanizeIdentifier(snapshot.status)}
                     </span>
                   </span>
                 ) : null}
@@ -380,7 +468,7 @@ function WorkspaceSidebar({
             </TooltipTrigger>
             {collapsed ? (
               <TooltipContent side="right">
-                Backend {snapshot.status.replace("_", " ")}
+                Backend {humanizeIdentifier(snapshot.status).toLowerCase()}
               </TooltipContent>
             ) : null}
           </Tooltip>
@@ -394,19 +482,22 @@ function WorkspaceTitlebar({
   snapshot,
   sidebarOpen,
   choosingProject,
+  integrationBusyId,
   onToggleSidebar,
   onChooseProject,
+  onSelectIntegration,
+  onLoginIntegration,
 }: {
   snapshot: BackendSnapshot | undefined;
   sidebarOpen: boolean;
   choosingProject: boolean;
+  integrationBusyId: string | undefined;
   onToggleSidebar: () => void;
   onChooseProject: () => void;
+  onSelectIntegration: (integrationId: string, model: string) => Promise<void>;
+  onLoginIntegration: (integrationId: string) => Promise<void>;
 }) {
   const project = snapshot?.activeProject;
-  const integration = snapshot?.activeIntegration;
-  const contextReady =
-    snapshot?.status === "ready" && (!integration || integration.availability === "ready");
 
   return (
     <header className="app-drag flex h-13 shrink-0 items-center gap-2 border-b bg-background/95 px-3">
@@ -440,69 +531,16 @@ function WorkspaceTitlebar({
       </div>
 
       {snapshot ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="app-no-drag max-w-72 text-muted-foreground"
-            >
-              <span
-                className={`size-1.5 rounded-full ${contextReady ? "bg-success" : "bg-warning"}`}
-                aria-hidden="true"
-              />
-              <span className="truncate">
-                {snapshot.mode === "embedded" ? "Local" : "Remote"}
-                {integration ? ` · ${integration.displayName}` : ""}
-                {integration?.model ? ` · ${integration.model}` : ""}
-              </span>
-              <ChevronDownIcon />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel>Execution context</DropdownMenuLabel>
-            <div className="space-y-2 px-1.5 py-2 text-xs">
-              <ContextDetail label="Backend" value={`${snapshot.mode} · ${snapshot.status}`} />
-              <ContextDetail label="Provider" value={integration?.displayName ?? "Not connected"} />
-              <ContextDetail label="Model" value={integration?.model ?? "Not selected"} />
-              <ContextDetail label="Access" value={`${snapshot.sandbox.codexMode} · network off`} />
-              {project ? <ContextDetail label="Root" value={project.root} mono /> : null}
-            </div>
-            <DropdownMenuSeparator />
-            {project ? (
-              <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(project.root)}>
-                <CopyIcon /> Copy project path
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem onSelect={onChooseProject} disabled={choosingProject}>
-              <FolderOpenIcon /> {project ? "Change project…" : "Open project…"}
-              <DropdownMenuShortcut>⌘O</DropdownMenuShortcut>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ProviderContextMenu
+          snapshot={snapshot}
+          choosingProject={choosingProject}
+          integrationBusyId={integrationBusyId}
+          onChooseProject={onChooseProject}
+          onSelectIntegration={onSelectIntegration}
+          onLoginIntegration={onLoginIntegration}
+        />
       ) : null}
     </header>
-  );
-}
-
-function ContextDetail({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="grid grid-cols-[4.5rem_1fr] gap-2">
-      <span className="text-muted-foreground select-none">{label}</span>
-      <span
-        className={`min-w-0 break-words text-foreground select-text ${mono ? "font-mono" : ""}`}
-      >
-        {value}
-      </span>
-    </div>
   );
 }
 
@@ -512,7 +550,7 @@ function WorkspaceSkeleton() {
       className="mx-auto flex h-full w-full max-w-3xl flex-col gap-7 px-8 py-10"
       aria-label="Connecting to backend"
     >
-      <div className="space-y-3">
+      <div className="flex flex-col gap-3">
         <Skeleton className="h-3 w-20" />
         <Skeleton className="h-4 w-4/5" />
         <Skeleton className="h-4 w-3/5" />
@@ -575,10 +613,14 @@ function ChatWorkspace({
   snapshot,
   composerRef,
   stopRunRef,
+  integrationBusy,
+  onLoginIntegration,
 }: {
   snapshot: BackendSnapshot;
   composerRef: MutableRefObject<HTMLTextAreaElement | null>;
   stopRunRef: MutableRefObject<() => void>;
+  integrationBusy: boolean;
+  onLoginIntegration: (integrationId: string) => Promise<void>;
 }) {
   const [input, setInput] = useState("");
   const smokeSent = useRef(false);
@@ -651,6 +693,19 @@ function ChatWorkspace({
           <AlertDescription>
             {integration.statusMessage ?? "This integration is unavailable."}
           </AlertDescription>
+          {integration.availability === "login_required" ? (
+            <AlertAction>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={integrationBusy}
+                onClick={() => void onLoginIntegration(integration.id)}
+              >
+                {integrationBusy ? <Spinner /> : <LogInIcon />} Sign in…
+              </Button>
+            </AlertAction>
+          ) : null}
         </Alert>
       ) : null}
 
@@ -711,7 +766,7 @@ function ChatWorkspace({
               {queue.map((queued, index) => (
                 <div key={queued.id} className="ml-auto flex max-w-[80%] items-start gap-2">
                   <div className="rounded-xl border border-dashed bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-                    <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide select-none">
+                    <span className="mb-1 block text-xs font-medium select-none">
                       Queued {index + 1}
                     </span>
                     <span className="whitespace-pre-wrap select-text">
@@ -772,7 +827,7 @@ function ChatWorkspace({
           />
           <InputGroupAddon align="block-end" className="justify-between gap-3">
             <span className="truncate text-xs font-normal">
-              {snapshot.sandbox.codexMode} · network off
+              {accessLabel(snapshot.sandbox.workspaceAccess)} · Tool network off
               {queue.length > 0 ? ` · ${queue.length} queued` : ""}
             </span>
             {isLoading ? (
@@ -825,7 +880,10 @@ function MessagePart({
   if (part.type === "thinking" && "content" in part)
     return (
       <details className="group/reasoning max-w-full rounded-lg border bg-muted/35 px-3 py-2 text-sm text-muted-foreground">
-        <summary className="cursor-default font-medium select-none">Reasoning</summary>
+        <summary className="flex cursor-default list-none items-center gap-2 font-medium select-none">
+          <ChevronRightIcon className="size-3.5 transition-transform group-open/reasoning:rotate-90" />
+          Reasoning
+        </summary>
         <div className="mt-2 border-l pl-3 select-text">
           <MarkdownContent>{part.content}</MarkdownContent>
         </div>
@@ -833,13 +891,14 @@ function MessagePart({
     );
   if (part.type === "tool-call" && "name" in part)
     return (
-      <details className="max-w-full rounded-lg border bg-muted/25 px-3 py-2 text-sm">
+      <details className="group/tool max-w-full rounded-lg border bg-muted/25 px-3 py-2 text-sm">
         <summary className="flex cursor-default list-none items-center gap-2 select-none">
           <TerminalSquareIcon className="size-4 text-muted-foreground" />
-          <span className="font-medium">{part.name}</span>
+          <span className="font-medium">{humanizeIdentifier(part.name)}</span>
           <Badge variant="outline" className="ml-auto">
-            {part.state}
+            {humanizeIdentifier(part.state)}
           </Badge>
+          <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-open/tool:rotate-90" />
         </summary>
         <pre className="mt-2 overflow-x-auto border-t pt-2 font-mono text-xs whitespace-pre-wrap select-text">
           {part.arguments}
@@ -850,13 +909,14 @@ function MessagePart({
     const content =
       typeof part.content === "string" ? part.content : JSON.stringify(part.content, null, 2);
     return (
-      <details className="max-w-full rounded-lg border bg-muted/25 px-3 py-2 text-sm">
+      <details className="group/tool max-w-full rounded-lg border bg-muted/25 px-3 py-2 text-sm">
         <summary className="flex cursor-default list-none items-center gap-2 select-none">
           <CheckCircle2Icon className="size-4 text-success" />
           <span className="font-medium">Tool result</span>
           <Badge variant="outline" className="ml-auto">
-            {part.state}
+            {humanizeIdentifier(part.state)}
           </Badge>
+          <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-open/tool:rotate-90" />
         </summary>
         <pre className="mt-2 max-h-80 overflow-auto border-t pt-2 font-mono text-xs whitespace-pre-wrap select-text">
           {content}

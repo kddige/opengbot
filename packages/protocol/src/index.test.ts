@@ -27,13 +27,15 @@ describe("control protocol", () => {
       mode: "embedded",
       status: "needs_setup",
       activeProject: null,
+      integrations: [],
       activeIntegration: null,
       activeSession: null,
       sandbox: {
         kind: "local_process",
         isolation: "trusted_host",
-        codexMode: "workspace-write",
-        networkAccess: false,
+        workspaceAccess: "workspace-write",
+        toolNetworkAccess: false,
+        providerNetworkAccess: true,
       },
       features: { remote: true, projects: true, chat: false, childSessions: false },
     });

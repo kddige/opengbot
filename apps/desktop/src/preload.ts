@@ -190,6 +190,27 @@ const api = Object.freeze({
     return ipcRenderer.invoke("opengbot.choose-project") as Promise<BackendSnapshot | null>;
   },
 
+  selectIntegration(integrationId: string, model: string): Promise<BackendSnapshot> {
+    return requestControl({
+      channel: "control",
+      requestId: crypto.randomUUID(),
+      operation: "integration.select",
+      payload: { commandId: crypto.randomUUID(), integrationId, model },
+    });
+  },
+
+  loginIntegration(
+    integrationId: string,
+    mode: "browser" | "device" = "browser",
+  ): Promise<BackendSnapshot> {
+    return requestControl({
+      channel: "control",
+      requestId: crypto.randomUUID(),
+      operation: "integration.login",
+      payload: { commandId: crypto.randomUUID(), integrationId, mode },
+    });
+  },
+
   async chat(payload: ChatStartPayload, onChunk: (chunk: StreamChunk) => void): Promise<void> {
     const port = await getBackendPort();
     const requestId = crypto.randomUUID();

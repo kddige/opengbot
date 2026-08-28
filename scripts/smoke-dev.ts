@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DEV_SMOKE_READY_MARKER } from "../apps/desktop/src/dev-smoke";
+import { DEV_SMOKE_PROVIDER_MARKER, DEV_SMOKE_READY_MARKER } from "../apps/desktop/src/dev-smoke";
 
 const timeoutMs = 30_000;
 let timedOut = false;
@@ -76,5 +76,9 @@ if (timedOut) process.exit(1);
 if (exitCode !== 0) process.exit(exitCode);
 if (!output.includes(DEV_SMOKE_READY_MARKER)) {
   console.error("OpenGBot development process exited before the backend handshake completed");
+  process.exit(1);
+}
+if (!output.includes(DEV_SMOKE_PROVIDER_MARKER)) {
+  console.error("OpenGBot development process exited before provider selection completed");
   process.exit(1);
 }

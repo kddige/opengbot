@@ -5,8 +5,10 @@ import { dirname } from "node:path";
 
 import {
   chatSessionSummarySchema,
+  modelSelectionSchema,
   projectSummarySchema,
   type ChatSessionSummary,
+  type ModelSelection,
   type ProjectSummary,
 } from "@opengbot/protocol";
 import { z } from "zod";
@@ -14,21 +16,43 @@ import { z } from "zod";
 export interface PersistedBackendState {
   activeProject: ProjectSummary | null;
   activeSession: ChatSessionSummary | null;
+  selections: Record<string, ModelSelection>;
 }
 
 const emptyState: PersistedBackendState = {
   activeProject: null,
   activeSession: null,
+  selections: {},
 };
 
-const storedBackendStateSchema = z.object({
+const storedBackendStateV1Schema = z.object({
   schemaVersion: z.literal(1),
   activeProject: projectSummarySchema.nullable(),
   activeSession: chatSessionSummarySchema.nullable(),
 });
 
+const storedBackendStateSchema = z.object({
+  schemaVersion: z.literal(1),
+  activeProject: projectSummarySchema.nullable(),
+  activeSession: chatSessionSummarySchema.nullable(),
+  selections: z.record(z.string(), modelSelectionSchema),
+});
+
 export function projectIdForRoot(root: string): string {
   return createHash("sha256").update(root).digest("hex").slice(0, 20);
+}
+
+export function chatSessionForSelection(selection: ModelSelection): ChatSessionSummary {
+  const selectionId = createHash("sha256")
+    .update(`${selection.integrationId}\0${selection.modelId}`)
+    .digest("hex")
+    .slice(0, 12);
+  return {
+    id: `session:${selection.projectId}:root:${selectionId}`,
+    projectId: selection.projectId,
+    threadId: `thread:${selection.projectId}:root:${selectionId}`,
+    displayName: "Root bot",
+  };
 }
 
 export interface ProjectStore {
@@ -57,11 +81,21 @@ export class FileProjectStore implements ProjectStore {
 
   async load(): Promise<PersistedBackendState> {
     try {
-      const parsed = storedBackendStateSchema.safeParse(
-        JSON.parse(await readFile(this.#file, "utf8")),
-      );
-      if (!parsed.success) return structuredClone(emptyState);
-      const { activeProject, activeSession } = parsed.data;
+      const stored: unknown = JSON.parse(await readFile(this.#file, "utf8"));
+      const current = storedBackendStateSchema.safeParse(stored);
+      const legacy = storedBackendStateV1Schema.safeParse(stored);
+      if (!current.success && !legacy.success) return structuredClone(emptyState);
+      const activeProject = current.success
+        ? current.data.activeProject
+        : legacy.success
+          ? legacy.data.activeProject
+          : null;
+      const activeSession = current.success
+        ? current.data.activeSession
+        : legacy.success
+          ? legacy.data.activeSession
+          : null;
+      const selections = current.success ? current.data.selections : {};
       if (activeProject === null && activeSession === null) return structuredClone(emptyState);
       if (activeProject === null || activeSession === null) return structuredClone(emptyState);
 
@@ -74,16 +108,30 @@ export class FileProjectStore implements ProjectStore {
       }
 
       const expectedProjectId = projectIdForRoot(canonicalRoot);
+      const selection = selections[expectedProjectId];
+      const expectedSession = selection
+        ? chatSessionForSelection(selection)
+        : {
+            id: `session:${expectedProjectId}:root`,
+            projectId: expectedProjectId,
+            threadId: `thread:${expectedProjectId}:root`,
+            displayName: "Root bot",
+          };
       if (
         canonicalRoot !== activeProject.root ||
         activeProject.id !== expectedProjectId ||
         activeSession.projectId !== expectedProjectId ||
-        activeSession.id !== `session:${expectedProjectId}:root` ||
-        activeSession.threadId !== `thread:${expectedProjectId}:root`
+        activeSession.id !== expectedSession.id ||
+        activeSession.threadId !== expectedSession.threadId
       ) {
         return structuredClone(emptyState);
       }
-      return { activeProject, activeSession };
+      const validatedSelections = Object.fromEntries(
+        Object.entries(selections).filter(([projectId, candidate]) => {
+          return candidate.projectId === projectId;
+        }),
+      );
+      return { activeProject, activeSession, selections: validatedSelections };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) {
         return structuredClone(emptyState);

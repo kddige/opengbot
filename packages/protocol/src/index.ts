@@ -2,7 +2,7 @@ import { EventSchemas } from "@ag-ui/core/schemas";
 import type { StreamChunk, UIMessage } from "@tanstack/ai";
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 export const backendModeSchema = z.enum(["embedded", "remote"]);
 export type BackendMode = z.infer<typeof backendModeSchema>;
@@ -12,6 +12,7 @@ export type CredentialMode = z.infer<typeof credentialModeSchema>;
 
 export const integrationAvailabilitySchema = z.enum([
   "ready",
+  "authenticating",
   "missing_cli",
   "login_required",
   "unavailable",
@@ -20,15 +21,29 @@ export type IntegrationAvailability = z.infer<typeof integrationAvailabilitySche
 
 export const integrationSchema = z.object({
   id: z.string().min(1),
+  backendId: z.string().min(1),
   kind: z.enum(["provider", "harness"]),
   provider: z.enum(["openai", "xai"]),
+  providerId: z.enum(["codex", "grok"]),
   displayName: z.string().min(1),
   credentialMode: credentialModeSchema,
+  credentialOwner: z.enum(["provider_cli", "opengbot_keychain"]),
   model: z.string().min(1).nullable(),
+  models: z.array(z.string().min(1)),
+  loginModes: z.array(z.enum(["browser", "device"])),
   availability: integrationAvailabilitySchema,
   statusMessage: z.string().min(1).nullable(),
+  executableVersion: z.string().min(1).nullable(),
+  lastCheckedAt: z.string().datetime(),
 });
 export type Integration = z.infer<typeof integrationSchema>;
+
+export const modelSelectionSchema = z.object({
+  projectId: z.string().min(1),
+  integrationId: z.string().min(1),
+  modelId: z.string().min(1),
+});
+export type ModelSelection = z.infer<typeof modelSelectionSchema>;
 
 export const projectSummarySchema = z.object({
   id: z.string().min(1),
@@ -58,13 +73,15 @@ export const backendSnapshotSchema = z.object({
   mode: backendModeSchema,
   status: z.enum(["ready", "needs_setup", "incompatible"]),
   activeProject: projectSummarySchema.nullable(),
+  integrations: z.array(integrationSchema),
   activeIntegration: integrationSchema.nullable(),
   activeSession: chatSessionSummarySchema.nullable(),
   sandbox: z.object({
     kind: z.literal("local_process"),
     isolation: z.literal("trusted_host"),
-    codexMode: z.literal("workspace-write"),
-    networkAccess: z.literal(false),
+    workspaceAccess: z.literal("workspace-write"),
+    toolNetworkAccess: z.literal(false),
+    providerNetworkAccess: z.literal(true),
   }),
   features: z.object({
     remote: z.boolean(),
@@ -93,6 +110,24 @@ export const controlRequestSchema = z.discriminatedUnion("operation", [
     payload: z.object({
       commandId: z.string().min(1),
       root: z.string().min(1),
+    }),
+  }),
+  requestBaseSchema.extend({
+    channel: z.literal("control"),
+    operation: z.literal("integration.select"),
+    payload: z.object({
+      commandId: z.string().min(1),
+      integrationId: z.string().min(1),
+      model: z.string().min(1),
+    }),
+  }),
+  requestBaseSchema.extend({
+    channel: z.literal("control"),
+    operation: z.literal("integration.login"),
+    payload: z.object({
+      commandId: z.string().min(1),
+      integrationId: z.string().min(1),
+      mode: z.enum(["browser", "device"]),
     }),
   }),
 ]);

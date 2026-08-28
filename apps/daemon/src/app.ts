@@ -1,10 +1,11 @@
-import { BackendService } from "@opengbot/backend";
+import { BackendService, type ProjectStore } from "@opengbot/backend";
 import { backendSnapshotSchema, clientHelloSchema } from "@opengbot/protocol";
 import { Hono } from "hono";
 
 export interface CreateDaemonOptions {
   backendId?: string;
   backendVersion?: string;
+  projectStore?: ProjectStore;
 }
 
 export function createDaemon(options: CreateDaemonOptions = {}) {
@@ -12,6 +13,7 @@ export function createDaemon(options: CreateDaemonOptions = {}) {
     backendId: options.backendId ?? "remote:opengbot",
     backendVersion: options.backendVersion ?? "0.0.0",
     mode: "remote",
+    ...(options.projectStore ? { projectStore: options.projectStore } : {}),
   });
   const app = new Hono();
 
