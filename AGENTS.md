@@ -22,5 +22,6 @@ Before editing files for a substantial task:
 - Secrets never enter renderer state, logs, fixtures, or `.agents-workspace`.
 - Project paths and tool grants are explicit capabilities, not ambient access.
 - The active project, backend target, provider, and model must remain visible.
+- Read root `DESIGN.md` before UI/UX work and treat it as the normative design contract.
 - Read `.agents-workspace/INDEX.md` before architecture work.
 - Record accepted cross-cutting choices under `.agents-workspace/decisions/`.

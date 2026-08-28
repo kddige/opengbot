@@ -14,6 +14,7 @@ Phase 0: foundation and first vertical slice.
 ## Active documents
 
 - [Initial product brief](briefs/000-initial-product-brief.md)
+- [Product design contract](../DESIGN.md)
 - [Team charter](TEAM.md)
 - [Product idea inbox](IDEAS.md)
 
@@ -23,6 +24,7 @@ Phase 0: foundation and first vertical slice.
 - [ADR 002: Embedded utility process and remote daemon](decisions/002-embedded-utility-and-remote-daemon.md)
 - [ADR 003: Provider-owned CLI authentication](decisions/003-provider-owned-cli-auth.md)
 - [ADR 004: Project-scoped Codex desktop slice](decisions/004-project-scoped-codex-slice.md)
+- [ADR 005: Adopt a normative product design contract](decisions/005-adopt-product-design-contract.md)
 
 Research and reviews are inputs only. Use accepted ADRs and the current product
 brief for normative architecture guidance.
